@@ -1,0 +1,169 @@
+pragma solidity 0.8.16;
+pragma abicoder v2;
+
+contract RockPaperScissors{
+    /*
+        Build a smart contract for Rock Paper Scissors game.
+        Player should be able to deposit ETH in the contract
+        Player should be able to withdraw their funds from the contract
+        Player should be able to create a new game and make a move
+        After both players have made a move, winnings (pot) should be paid out to the winner
+        Smart contract keeps 1% of the winnings
+        Players can be added by the owner of the contract
+        Players can join existing games where they can see that move is made and what amount is the bet
+    */
+    address owner;
+
+    constructor (address _owner){
+        owner = _owner;
+    }
+
+    struct Player {
+        string name;
+        address addressOfThePlayer;
+    }
+
+    Player[] allThePlayers;
+
+    struct Game {
+        uint256 gameId;
+        uint256 bet;
+        address player1Address;
+        address player2Address;
+        string player1move;
+        string player2move;
+        string winner;
+        bool winningsPaidOut;
+    }
+
+    Game[] games;
+
+    mapping (address => uint256) balances;
+
+    modifier correctMove(string memory _move) {
+        require( 
+            keccak256(bytes(_move)) == keccak256(bytes("rock")) || 
+            keccak256(bytes(_move)) == keccak256(bytes("paper")) || 
+            keccak256(bytes(_move)) == keccak256(bytes("scissors")),
+            "You must play 'rock', 'paper' or 'scissors'" 
+        );
+        _;
+    }
+
+    modifier sufficientBalance(uint256 _bet) {
+        require(balances[msg.sender] >= _bet, "Balance not sufficient");
+        _;
+    }
+
+    event FinishedGames(uint256, uint256, address, address, string, string, string, bool);
+
+    function deposit() public payable {
+        balances[msg.sender] += msg.value;
+    }
+
+    function withdraw(uint amount) public payable{
+        require(balances[msg.sender] >= amount, "Funds not sufficient");
+        balances[msg.sender] -= amount;
+        payable(msg.sender).transfer(amount);
+    }
+
+    function getBalanceOfPlayer() public view returns (uint256) {
+        return balances[msg.sender];
+    }
+
+    function getBalanceOfContract() public view returns (uint256) {
+        return address(this).balance;
+    }
+
+    function createNewGame(uint256 _bet, string memory _player1move) public correctMove(_player1move) sufficientBalance(_bet){
+        
+        balances[msg.sender] -= _bet;
+        games.push(Game(games.length, _bet, msg.sender, address(0), _player1move, "moveNotMadeYes", "notKnown", false));
+    }
+
+    function getNewestGame() public view returns (uint256, uint256) {
+        return (games[games.length-1].gameId, games[games.length-1].bet);
+    }
+
+    function getNewestGameFullInfo() public view returns (uint256, uint256, address, address, string memory, string memory, string memory, bool) {
+        return (
+            games[games.length-1].gameId, 
+            games[games.length-1].bet, 
+            games[games.length-1].player1Address, 
+            games[games.length-1].player2Address,
+            games[games.length-1].player1move, 
+            games[games.length-1].player2move, 
+            games[games.length-1].winner, 
+            games[games.length-1].winningsPaidOut
+        );
+    }
+
+    function joinGame(uint256 _gameId, string memory _player2move) public correctMove(_player2move) sufficientBalance(balances[msg.sender]){
+        require(games[_gameId].player2Address != games[_gameId].player1Address, "You cannot join your own game");
+        games[_gameId].player2move = _player2move;
+        games[_gameId].player2Address = msg.sender;
+        balances[games[_gameId].player2Address] -= games[_gameId].bet;
+
+        _getWinner(_gameId);
+        
+    }
+
+    function _getWinner(uint256 _gameId) internal {
+        
+        string memory winnerOfTheGame;
+        
+        if(keccak256(bytes(games[_gameId].player1move)) == keccak256(bytes("rock")) && keccak256(bytes(games[_gameId].player2move)) == keccak256(bytes("rock")) ) {
+            winnerOfTheGame = "draw";
+        }
+        else if(keccak256(bytes(games[_gameId].player1move)) == keccak256(bytes("rock")) && keccak256(bytes(games[_gameId].player2move)) == keccak256(bytes("paper")) ) {
+            winnerOfTheGame = "player2";
+        }
+        else if(keccak256(bytes(games[_gameId].player1move)) == keccak256(bytes("rock")) && keccak256(bytes(games[_gameId].player2move)) == keccak256(bytes("scissors")) ) {
+            winnerOfTheGame = "player1";
+        }
+        else if(keccak256(bytes(games[_gameId].player1move)) == keccak256(bytes("paper")) && keccak256(bytes(games[_gameId].player2move)) == keccak256(bytes("rock")) ) {
+            winnerOfTheGame = "player1";
+        }
+        else if(keccak256(bytes(games[_gameId].player1move)) == keccak256(bytes("paper")) && keccak256(bytes(games[_gameId].player2move)) == keccak256(bytes("paper")) ) {
+            winnerOfTheGame = "draw";
+        }
+        else if(keccak256(bytes(games[_gameId].player1move)) == keccak256(bytes("paper")) && keccak256(bytes(games[_gameId].player2move)) == keccak256(bytes("scissors")) ) {
+            winnerOfTheGame = "player2";
+        }
+        else if(keccak256(bytes(games[_gameId].player1move)) == keccak256(bytes("scissors")) && keccak256(bytes(games[_gameId].player2move)) == keccak256(bytes("rock")) ) {
+            winnerOfTheGame = "player2";
+        }
+        else if(keccak256(bytes(games[_gameId].player1move)) == keccak256(bytes("scissors")) && keccak256(bytes(games[_gameId].player2move)) == keccak256(bytes("paper")) ) {
+            winnerOfTheGame = "player1";
+        }
+        else if(keccak256(bytes(games[_gameId].player1move)) == keccak256(bytes("scissors")) && keccak256(bytes(games[_gameId].player2move)) == keccak256(bytes("scissors")) ) {
+            winnerOfTheGame = "draw";
+        }
+
+        _payout(_gameId, winnerOfTheGame);
+
+        emit FinishedGames(games[_gameId].gameId, games[_gameId].bet, games[_gameId].player1Address, games[_gameId].player2Address, games[_gameId].player1move, games[_gameId].player2move, games[_gameId].winner, games[_gameId].winningsPaidOut);
+        games.pop();
+        
+    }
+
+    function _payout(uint256 _gameId, string memory _winnerOfTheGame) internal{
+        uint256 pot = games[_gameId].bet * 2;
+        uint256 contractsShare = pot/100;
+        uint256 oneWinnerPayout = pot - contractsShare;
+        uint256 drawPayout = (pot - contractsShare) / 2;
+        
+        if(keccak256(bytes(_winnerOfTheGame)) == keccak256(bytes("draw"))){
+            payable(games[_gameId].player1Address).transfer(drawPayout);
+            payable(games[_gameId].player2Address).transfer(drawPayout);
+        }
+        if(keccak256(bytes(_winnerOfTheGame)) == keccak256(bytes("player1"))){
+            payable(games[_gameId].player1Address).transfer(oneWinnerPayout);
+        }
+        if(keccak256(bytes(_winnerOfTheGame)) == keccak256(bytes("player2"))){
+            payable(games[_gameId].player2Address).transfer(oneWinnerPayout);
+        }
+        games[_gameId].winner = _winnerOfTheGame;
+        games[_gameId].winningsPaidOut = true;
+    }
+}
